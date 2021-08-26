@@ -1,9 +1,9 @@
 use ::image::Rgb;
+use itertools::Itertools;
 use rand::prelude::*;
 use rand_pcg::Pcg64;
 use rayon::prelude::*;
 use std::cmp::Ordering::*;
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::f64::consts::E;
@@ -199,6 +199,7 @@ struct Lake {
     height: f64,
     is_lake: bool,
     lake_id: u16,
+    lake_out: (usize, usize),
 }
 
 impl ToRgb for Lake {
@@ -219,6 +220,7 @@ fn compute_lakes(height_map: &Grid<f64>) -> (Grid<Lake>, u16) {
         height: 1.0,
         is_lake: false,
         lake_id: 0,
+        lake_out: (0, 0),
     });
     to_rgb_image(&lakes)
         .save(format!("lakes_0.png"))
@@ -231,6 +233,7 @@ fn compute_lakes(height_map: &Grid<f64>) -> (Grid<Lake>, u16) {
                 height: *v,
                 is_lake: false,
                 lake_id: 0,
+                lake_out: i,
             }
         }
     }
@@ -294,13 +297,16 @@ fn label_lakes(lakes: &mut Grid<Lake>) -> u16 {
         .iter_with_indices()
         .filter_map(|(v, i)| if v.is_lake { Some(i) } else { None })
         .collect();
+    let mut outputs = vec![(0, 0)];
 
-    let mut lake_id = 1;
+    let mut lake_id = 0;
 
     while let Some(start_point) = choose_and_remove(&mut unprocessed).clone() {
         queue.push_front(start_point);
         lakes[start_point].lake_id = lake_id;
         lake_id += 1;
+        outputs.push((0, 0));
+        let mut out_candidate_height = lakes[start_point].height;
 
         while let Some(index) = queue.pop_front() {
             for offset in NEIGHBOR_OFFSETS {
@@ -311,10 +317,17 @@ fn label_lakes(lakes: &mut Grid<Lake>) -> u16 {
                         lakes[neighbor_index].lake_id = lakes[index].lake_id;
                         queue.push_back(neighbor_index);
                     }
+                } else if lakes[neighbor_index].height < out_candidate_height {
+                    out_candidate_height = dbg!(lakes[neighbor_index].height);
+                    outputs[lake_id as usize] = dbg!(neighbor_index);
                 }
             }
         }
     }
+
+    lakes
+        .par_iter_mut()
+        .for_each(|lake| lake.lake_out = outputs[lake.lake_id as usize]);
 
     lake_id
 }
@@ -333,6 +346,20 @@ fn draw_lake_labels(labels: &Grid<Lake>, seed: u64) -> Grid<(u8, u8, u8)> {
             );
         }
     });
+
+    labels
+        .iter()
+        .map(|lake| (lake.lake_id, lake.lake_out))
+        .unique()
+        .for_each(|(id, out)| {
+            let mut rng = Pcg64::seed_from_u64(seed + id as u64);
+            res[out] = (
+                255 - rng.gen_range(0..255),
+                255 - rng.gen_range(0..255),
+                255 - rng.gen_range(0..255),
+            )
+        });
+
     res
 }
 
@@ -442,11 +469,15 @@ fn main() {
     );
     let map = overlay_rivers(&color, &eroded, 0.4, &flows);
 
-    let (lakes, _) = compute_lakes(&eroded);
+    let (mut lakes, _) = compute_lakes(&eroded);
 
     to_rgb_image(&lakes)
         .save("lakes.png")
         .expect("lakes.png failed to save");
+
+    to_rgb_image(&draw_lake_labels(&lakes, 1338))
+        .save("lake_labels.png")
+        .expect("lake_labels.png failed to save")
 }
 
 #[cfg(test)]

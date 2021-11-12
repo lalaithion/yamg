@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::common::*;
 use crate::grid::*;
 use image::*;

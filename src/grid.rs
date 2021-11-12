@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use rayon::prelude::*;
 use std::iter::*;
 use std::ops::{Index, IndexMut};
@@ -87,7 +89,7 @@ impl<T> Grid<T> {
         Grid::from(height, width, RepeatN::new(height * width, f))
     }
 
-    pub fn from(height: usize, width: usize, data: impl Iterator<Item = T>) -> Grid<T> {
+    pub fn from(_height: usize, width: usize, data: impl Iterator<Item = T>) -> Grid<T> {
         Grid {
             stride: width,
             data: data.collect(),

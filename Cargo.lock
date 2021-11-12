@@ -426,6 +426,7 @@ dependencies = [
  "image",
  "itertools",
  "rand",
+ "rand_chacha",
  "rand_pcg",
  "rayon",
  "vecmath",

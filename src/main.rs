@@ -1,7 +1,7 @@
 use ::image::Rgb;
 use itertools::Itertools;
 use rand::prelude::*;
-use rand_pcg::Pcg64;
+use rand_chacha::ChaCha20Rng;
 use rayon::prelude::*;
 use std::cmp::Ordering::*;
 use std::collections::HashSet;
@@ -29,7 +29,8 @@ struct Perlin {
 
 impl Perlin {
     fn new(octaves: u8, scale: u8, seed: u64) -> Perlin {
-        let mut rng = Pcg64::seed_from_u64(seed);
+        let mut rng = ChaCha20Rng::seed_from_u64(seed);
+        dbg!(rng.gen::<u8>());
         let mut vectors = Vec::with_capacity(octaves as usize);
         for i in 0..octaves {
             let grid_size = scale as usize * 2usize.pow(i as u32);
@@ -153,25 +154,32 @@ fn gradient(greyscale: &Grid<f64>, colors: &Vec<(f64, (u8, u8, u8))>) -> Grid<(u
 struct FlowState {
     dir: (i64, i64),
     flow: f64,
+    is_lake: bool,
 }
 
-fn compute_water_flows(height_map: &Grid<f64>) -> Grid<FlowState> {
+fn compute_water_flows(height_map: &Grid<Lake>) -> Grid<FlowState> {
     let mut indices: Vec<(usize, usize)> = height_map.iter_indices().collect();
-    indices.sort_unstable_by(|a, b| height_map[*b].partial_cmp(&height_map[*a]).unwrap_or(Equal));
+    indices.sort_unstable_by(|a, b| {
+        height_map[*b]
+            .height
+            .partial_cmp(&height_map[*a].height)
+            .unwrap_or(Equal)
+    });
 
     let mut flow = height_map.copy_dimensions(FlowState {
         dir: (0, 0),
         flow: 0.0,
+        is_lake: false,
     });
 
     for index in indices {
         let mut outgoing_flow = 0.0;
-        let current_height = height_map[index];
+        let current_height = height_map[index].height;
         let mut min_height = current_height;
         let mut min_dir = (0, 0);
 
         for offset in NEIGHBOR_OFFSETS.iter() {
-            let target_height = *height_map.get_wrapping(shift_index(index, *offset));
+            let target_height = height_map.get_wrapping(shift_index(index, *offset)).height;
             let target_flow = flow.get_wrapping(shift_index(index, *offset));
             if target_height < min_height {
                 min_height = target_height;
@@ -188,6 +196,7 @@ fn compute_water_flows(height_map: &Grid<f64>) -> Grid<FlowState> {
         flow[index] = FlowState {
             dir: min_dir,
             flow: outgoing_flow,
+            is_lake: height_map[index].is_lake,
         };
     }
 
@@ -318,8 +327,8 @@ fn label_lakes(lakes: &mut Grid<Lake>) -> u16 {
                         queue.push_back(neighbor_index);
                     }
                 } else if lakes[neighbor_index].height < out_candidate_height {
-                    out_candidate_height = dbg!(lakes[neighbor_index].height);
-                    outputs[lake_id as usize] = dbg!(neighbor_index);
+                    out_candidate_height = lakes[neighbor_index].height;
+                    outputs[lake_id as usize] = neighbor_index;
                 }
             }
         }
@@ -338,7 +347,7 @@ fn draw_lake_labels(labels: &Grid<Lake>, seed: u64) -> Grid<(u8, u8, u8)> {
         if labels[i].lake_id == 0 {
             *v = (0, 0, 0)
         } else {
-            let mut rng = Pcg64::seed_from_u64(seed + labels[i].lake_id as u64);
+            let mut rng = ChaCha20Rng::seed_from_u64(seed + labels[i].lake_id as u64);
             *v = (
                 rng.gen_range(0..255),
                 rng.gen_range(0..255),
@@ -352,7 +361,7 @@ fn draw_lake_labels(labels: &Grid<Lake>, seed: u64) -> Grid<(u8, u8, u8)> {
         .map(|lake| (lake.lake_id, lake.lake_out))
         .unique()
         .for_each(|(id, out)| {
-            let mut rng = Pcg64::seed_from_u64(seed + id as u64);
+            let mut rng = ChaCha20Rng::seed_from_u64(seed + id as u64);
             res[out] = (
                 255 - rng.gen_range(0..255),
                 255 - rng.gen_range(0..255),
@@ -378,8 +387,8 @@ fn erode(height_map: &Grid<f64>, flows: &Grid<FlowState>, scale: f64) -> Grid<f6
                 * (height_map[idx] - height_map.get_wrapping(shift_index(idx, flow.dir)))
                 / offset_length(flow.dir);
             *v -= 0.5 * flow.flow.powf(0.8) * slope.powf(2.0);
-        } else if flow.dir == (0, 0) {
-            *v += height_diff;
+        } else if flow.dir == (0, 0) || flow.is_lake {
+            *v += height_diff / 2.0;
         } else {
             *v += height_diff / (1.0 + E.powf(flow.flow - 6.0));
         }
@@ -391,7 +400,8 @@ fn erode_loop(height_map: &Grid<f64>, iterations: u64) -> Grid<f64> {
     let mut eroded = height_map.clone();
     for i in 0..iterations {
         dbg!(i);
-        let flows = compute_water_flows(&eroded);
+        let (lakes, _) = compute_lakes(&eroded);
+        let flows = compute_water_flows(&lakes);
         eroded = erode(&eroded, &flows, 25.0);
     }
     eroded
@@ -416,7 +426,11 @@ fn overlay_rivers(
             .zip(background.iter())
             .zip(height_map.iter())
             .map(|((flow, original), height)| {
-                let percent = (flow.flow / max_flow).powf(0.3);
+                let percent = if flow.is_lake {
+                    0.8
+                } else {
+                    (flow.flow / max_flow).powf(0.2)
+                };
                 if *height < sea_level {
                     *original
                 } else {
@@ -441,20 +455,20 @@ macro_rules! time {
 }
 
 fn main() {
-    let p = Perlin::new(7, 4, 1337);
+    let p = Perlin::new(7, 2, 3);
     let height_map = time!("perlin", p.render_to(500));
     let terrain_gradient = vec![
-        (0.3, (9, 9, 121)),
-        (0.3999, (31, 192, 207)),
-        (0.4, (231, 222, 31)),
-        (0.41, (167, 218, 48)),
-        (0.6, (31, 171, 69)),
-        (0.8, (145, 125, 46)),
+        (0.5, (9, 9, 121)),
+        (0.6, (31, 192, 207)),
+        (0.6001, (231, 222, 31)),
+        (0.61, (167, 218, 48)),
+        (0.8, (31, 171, 69)),
+        (0.9, (145, 125, 46)),
         (1.0, (255, 255, 255)),
     ];
 
     let eroded = erode_loop(&height_map, 1);
-    let flows = compute_water_flows(&eroded);
+    let flows = compute_water_flows(&compute_lakes(&eroded).0);
     let relief = compute_relief(&eroded, vec3_normalized([2.0, 2.0, 4.0]), 25.0);
     let color = overlay(
         &gradient(&height_map, &terrain_gradient),
@@ -467,17 +481,11 @@ fn main() {
             )
         },
     );
-    let map = overlay_rivers(&color, &eroded, 0.4, &flows);
+    let map = overlay_rivers(&color, &eroded, 0.6, &flows);
 
-    let (mut lakes, _) = compute_lakes(&eroded);
-
-    to_rgb_image(&lakes)
-        .save("lakes.png")
-        .expect("lakes.png failed to save");
-
-    to_rgb_image(&draw_lake_labels(&lakes, 1338))
-        .save("lake_labels.png")
-        .expect("lake_labels.png failed to save")
+    to_rgb_image(&map)
+        .save("final.png")
+        .expect("final.png failed to save")
 }
 
 #[cfg(test)]
@@ -490,8 +498,8 @@ mod test {
     fn compare_goldens() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
-        let p = Perlin::new(7, 4, 1337);
-        let height_map = p.render_to(500);
+        let p = Perlin::new(7, 2, 4);
+        let height_map = p.render_to(2000);
         let relief_map = compute_relief(&height_map, vec3_normalized([2.0, 2.0, 4.0]), 25.0);
         let height_image = to_gray_image(&height_map);
         let relief_image = to_gray_image(&relief_map);

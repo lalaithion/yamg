@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod common;
+mod erosion;
 mod grid;
 mod image;
 mod perlin;
@@ -106,9 +107,6 @@ fn compute_lakes(height_map: &Grid<f64>) -> (Grid<Lake>, u16) {
         lake_id: 0,
         lake_out: (0, 0),
     });
-    to_rgb_image(&lakes)
-        .save(format!("lakes_0.png"))
-        .expect("failed to write lakes map");
 
     // Then, we'll use the oceans (0.4) as our initial heights.
     for (v, i) in height_map.iter_with_indices() {
@@ -271,14 +269,38 @@ fn erode(height_map: &Grid<f64>, flows: &Grid<FlowState>, scale: f64) -> Grid<f6
     eroded
 }
 
-fn erode_loop(height_map: &Grid<f64>, iterations: u64) -> Grid<f64> {
+fn erode_loop(height_map: &Grid<f64>, iterations: usize) -> Grid<f64> {
     let mut eroded = height_map.clone();
-    for i in 0..iterations {
-        dbg!(i);
-        let (lakes, _) = compute_lakes(&eroded);
-        let flows = compute_water_flows(&lakes);
-        eroded = erode(&eroded, &flows, 25.0);
-    }
+    let mut remaining_water = crate::erosion::erode(
+        &mut eroded,
+        crate::erosion::Params {
+            rain_rate: 0.00012,
+            evaporation_rate: 0.05,
+
+            min_height_delta: 0.05,
+            gravity: 77.0,
+
+            sediment_capacity_constant: 50.0,
+            dissolving_rate: 0.25,
+            deposition_rate: 0.001,
+        },
+        iterations,
+        0,
+    );
+
+    let max_water = *remaining_water
+        .iter()
+        .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+        .unwrap_or(&1.0);
+
+    remaining_water.par_iter_mut().for_each(|x| *x /= max_water);
+
+    dbg!(remaining_water[(0, 0)]);
+
+    to_gray_image(&remaining_water)
+        .save("water.png")
+        .expect("water.png failed to save");
+
     eroded
 }
 
@@ -330,23 +352,25 @@ macro_rules! time {
 }
 
 fn main() {
-    let p = Perlin::new(7, 2, 3);
+    let p = Perlin::new(7, 4, 0);
     let height_map = time!("perlin", p.render_to(500));
     let terrain_gradient = vec![
-        (0.5, (9, 9, 121)),
-        (0.6, (31, 192, 207)),
-        (0.6001, (231, 222, 31)),
-        (0.61, (167, 218, 48)),
+        (0.2, (9, 9, 121)),
+        (0.4, (31, 192, 207)),
+        (0.40001, (231, 222, 31)),
+        (0.41, (167, 218, 48)),
         (0.8, (31, 171, 69)),
         (0.9, (145, 125, 46)),
         (1.0, (255, 255, 255)),
     ];
 
-    let eroded = erode_loop(&height_map, 1);
-    let flows = compute_water_flows(&compute_lakes(&eroded).0);
+    let eroded = time!("erode", erode_loop(&height_map, 50));
+
+    let lakes = &compute_lakes(&eroded).0;
+    let flows = compute_water_flows(lakes);
     let relief = compute_relief(&eroded, vec3_normalized([2.0, 2.0, 4.0]), 25.0);
     let color = overlay(
-        &gradient(&height_map, &terrain_gradient),
+        &gradient(&eroded, &terrain_gradient),
         &relief,
         |(r, g, b), x| {
             (
@@ -356,11 +380,14 @@ fn main() {
             )
         },
     );
-    let map = overlay_rivers(&color, &eroded, 0.6, &flows);
+    let map = overlay_rivers(&color, &eroded, 0.4, &flows);
 
     to_rgb_image(&map)
         .save("final.png")
-        .expect("final.png failed to save")
+        .expect("final.png failed to save");
+    to_rgb_image(&draw_lake_labels(lakes, 1))
+        .save("lakes.png")
+        .expect("lakes.png failed to save");
 }
 
 #[cfg(test)]
@@ -374,7 +401,7 @@ mod test {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
         let p = Perlin::new(7, 2, 4);
-        let height_map = p.render_to(2000);
+        let height_map = p.render_to(500);
         let relief_map = compute_relief(&height_map, vec3_normalized([2.0, 2.0, 4.0]), 25.0);
         let height_image = to_gray_image(&height_map);
         let relief_image = to_gray_image(&relief_map);

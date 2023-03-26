@@ -10,3 +10,5 @@ generates terrain for these maps.
 - https://mewo2.com/notes/terrain/
 - http://www.hempuli.com/blogblog/archives/1699
 - https://davidar.io/post/sim-glsl
+- http://ranmantaru.com/blog/2011/10/08/water-erosion-on-heightmap-terrain/
+- https://github.com/dandrino/terrain-erosion-3-ways

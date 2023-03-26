@@ -1,8 +1,15 @@
 #![allow(dead_code)]
 
+use std::f64::consts::PI;
+
 use crate::common::*;
 use crate::grid::*;
+use crate::vector::UnitVec;
+use angular_units::Rad;
 use image::*;
+use prisma;
+use prisma::Color;
+use prisma::FromColor;
 
 pub trait ToRgb {
     fn to_rgb(&self) -> Rgb<u8>;
@@ -23,6 +30,14 @@ impl ToRgb for (u8, u8, u8) {
 impl ToRgb for (f64, f64, f64) {
     fn to_rgb(&self) -> Rgb<u8> {
         Rgb([scale(self.0), scale(self.1), scale(self.2)])
+    }
+}
+
+impl ToRgb for UnitVec {
+    fn to_rgb(&self) -> Rgb<u8> {
+        let rgb: prisma::Rgb<f64> =
+            prisma::Rgb::from_color(&prisma::Hsv::new(Rad(self.get_angle()), 1.0f64, 1.0));
+        rgb.to_tuple().to_rgb()
     }
 }
 

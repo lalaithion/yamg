@@ -55,7 +55,7 @@ impl Perlin {
 
             let vectors = corners
                 .clone()
-                .map(|[x, y]| grid[wrap((x as usize, y as usize), grid_size, grid_size)]);
+                .map(|[x, y]| grid[wrap((x, y), grid_size, grid_size)]);
 
             let distances = corners.map(|v| vec2_sub([v[0] as f64, v[1] as f64], scaled_position));
 

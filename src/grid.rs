@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use crate::common::*;
 use rayon::prelude::*;
 use std::iter::*;
 use std::ops::{Index, IndexMut};
@@ -84,6 +85,14 @@ impl<T> Iterator for RepeatN<T> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Neighbors<T> {
+    pub up: T,
+    pub right: T,
+    pub down: T,
+    pub left: T,
+}
+
 impl<T> Grid<T> {
     pub fn from_factory(height: usize, width: usize, f: impl Fn() -> T + 'static) -> Grid<T> {
         Grid::from(height, width, RepeatN::new(height * width, f))
@@ -97,6 +106,16 @@ impl<T> Grid<T> {
     }
 
     pub fn from_copy_dimensions<R>(&self, data: impl Iterator<Item = R>) -> Grid<R> {
+        Grid {
+            stride: self.width(),
+            data: data.collect(),
+        }
+    }
+
+    pub fn from_copy_dimensions_par<R>(&self, data: impl ParallelIterator<Item = R>) -> Grid<R>
+    where
+        R: Send,
+    {
         Grid {
             stride: self.width(),
             data: data.collect(),
@@ -140,12 +159,55 @@ impl<T> Grid<T> {
         (0..self.data.len()).map(move |i| (i / stride, i % stride))
     }
 
+    pub fn par_iter_indices(&self) -> impl IndexedParallelIterator<Item = (usize, usize)> {
+        let stride = self.stride;
+        (0..self.data.len())
+            .into_par_iter()
+            .map(move |i| (i / stride, i % stride))
+    }
+
+    pub fn convolve(&self) -> impl Iterator<Item = (&T, Neighbors<&T>)> {
+        let h = self.height();
+        let w = self.width();
+        let wrap = move |x| wrap(x, w, h);
+        self.iter_indices().map(move |(x, y)| {
+            (
+                &self[(x, y)],
+                Neighbors {
+                    up: &self[wrap((x, if y == 0 { h - 1 } else { y - 1 }))],
+                    right: &self[wrap((x + 1, y))],
+                    down: &self[wrap((x, y + 1))],
+                    left: &self[wrap((if x == 0 { w - 1 } else { x - 1 }, y))],
+                },
+            )
+        })
+    }
+
+    pub fn convolve_indices(&self) -> impl Iterator<Item = (&T, (usize, usize), Neighbors<&T>)> {
+        let h = self.height();
+        let w = self.width();
+        let wrap = move |x| wrap(x, w, h);
+        self.iter_indices().map(move |(x, y)| {
+            (
+                &self[(x, y)],
+                (x, y),
+                Neighbors {
+                    up: &self[wrap((x, if y == 0 { h - 1 } else { y - 1 }))],
+                    right: &self[wrap((x + 1, y))],
+                    down: &self[wrap((x, y + 1))],
+                    left: &self[wrap((if x == 0 { w - 1 } else { x - 1 }, y))],
+                },
+            )
+        })
+    }
+
     pub fn copy_dimensions<R: Clone>(&self, item: R) -> Grid<R> {
         Grid {
             stride: self.stride,
             data: vec![item; self.data.len()],
         }
     }
+
     pub fn get_wrapping_index(&self, index: (i64, i64)) -> (usize, usize) {
         (
             index.0.rem_euclid(self.width() as i64) as usize,
@@ -174,7 +236,7 @@ impl<T> Grid<T> {
 impl<T: Send> Grid<T> {
     pub fn par_iter_mut_with_indices(
         &mut self,
-    ) -> impl ParallelIterator<Item = (&mut T, (usize, usize))> {
+    ) -> impl IndexedParallelIterator<Item = (&mut T, (usize, usize))> {
         let stride = self.stride;
         self.data
             .par_iter_mut()
@@ -182,18 +244,41 @@ impl<T: Send> Grid<T> {
             .map(move |(i, x)| (x, (i / stride, i % stride)))
     }
 
-    pub fn par_iter_mut(&mut self) -> impl ParallelIterator<Item = &mut T> {
+    pub fn par_iter_mut(&mut self) -> impl IndexedParallelIterator<Item = &mut T> {
         self.data.par_iter_mut()
     }
 }
 
 impl<T: Send + Sync> Grid<T> {
-    pub fn par_iter_with_indices(&self) -> impl ParallelIterator<Item = (&T, (usize, usize))> {
+    pub fn par_iter(&self) -> impl IndexedParallelIterator<Item = &T> {
+        self.data.par_iter()
+    }
+
+    pub fn par_iter_with_indices(
+        &self,
+    ) -> impl IndexedParallelIterator<Item = (&T, (usize, usize))> {
         let stride = self.stride;
         self.data
             .par_iter()
             .enumerate()
             .map(move |(i, x)| (x, (i / stride, i % stride)))
+    }
+
+    pub fn par_convolve(&self) -> impl IndexedParallelIterator<Item = (&T, Neighbors<&T>)> {
+        let h = self.height();
+        let w = self.width();
+        let wrap = move |x| wrap(x, w, h);
+        self.par_iter_indices().map(move |(x, y)| {
+            (
+                &self[(x, y)],
+                Neighbors {
+                    up: &self[wrap((x, if y == 0 { h - 1 } else { y - 1 }))],
+                    right: &self[wrap((x + 1, y))],
+                    down: &self[wrap((x, y + 1))],
+                    left: &self[wrap((if x == 0 { w - 1 } else { x - 1 }, y))],
+                },
+            )
+        })
     }
 }
 
@@ -252,4 +337,36 @@ pub fn overlay<A: Clone, B: Clone, R>(a: &Grid<A>, b: &Grid<B>, f: impl Fn(A, B)
             .collect(),
         stride: a.stride,
     }
+}
+
+impl Grid<f64> {
+    pub fn sample(&self, (x, y): (f64, f64)) -> f64 {
+        let (minx, maxx) = wrap(bounds(x), self.width(), self.width());
+        let (miny, maxy) = wrap(bounds(y), self.height(), self.height());
+        let miny_height = interpolate(self[(minx, miny)], self[(maxx, miny)], x.fract());
+        let maxy_height = interpolate(self[(minx, maxy)], self[(maxx, maxy)], x.fract());
+        interpolate(miny_height, maxy_height, y.fract())
+    }
+}
+
+pub fn zip<A: Send + Sync, B: Send + Sync, C: Send>(
+    a: &Grid<A>,
+    b: &Grid<B>,
+    f: impl Fn(&A, &B) -> C + Sync + Send,
+) -> Grid<C> {
+    assert!(a.height() == b.height() && a.width() == b.width());
+    a.from_copy_dimensions_par(a.par_iter().zip(b.par_iter()).map(|(x, y)| f(x, y)))
+}
+
+pub fn zip_with_indices<A: Send + Sync, B: Send + Sync, C: Send>(
+    a: &Grid<A>,
+    b: &Grid<B>,
+    f: impl Fn((&A, (usize, usize)), (&B, (usize, usize))) -> C + Sync + Send,
+) -> Grid<C> {
+    assert!(a.height() == b.height() && a.width() == b.width());
+    a.from_copy_dimensions_par(
+        a.par_iter_with_indices()
+            .zip(b.par_iter_with_indices())
+            .map(|(x, y)| f(x, y)),
+    )
 }

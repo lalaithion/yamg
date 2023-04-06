@@ -12,7 +12,6 @@ use ::image::Rgb;
 use itertools::Itertools;
 use rand::prelude::*;
 use rand_chacha::ChaCha20Rng;
-use rayon::prelude::*;
 use std::cmp::Ordering::*;
 use std::collections::HashSet;
 use std::collections::VecDeque;
@@ -129,7 +128,7 @@ fn compute_lakes(height_map: &Grid<f64>) -> (Grid<Lake>, u16) {
     let mut changed = true;
     while changed {
         let mut new_lakes = lakes.clone();
-        new_lakes.par_iter_mut_with_indices().for_each(|(v, i)| {
+        new_lakes.iter_mut_with_indices().for_each(|(v, i)| {
             let mut min_height = lakes[i].height;
             for offset in NEIGHBOR_OFFSETS {
                 let lake = lakes.get_wrapping(shift_index(i, offset));
@@ -208,7 +207,7 @@ fn label_lakes(lakes: &mut Grid<Lake>) -> u16 {
     }
 
     lakes
-        .par_iter_mut()
+        .iter_mut()
         .for_each(|lake| lake.lake_out = outputs[lake.lake_id as usize]);
 
     lake_id
@@ -216,7 +215,7 @@ fn label_lakes(lakes: &mut Grid<Lake>) -> u16 {
 
 fn draw_lake_labels(labels: &Grid<Lake>, seed: u64) -> Grid<(u8, u8, u8)> {
     let mut res = labels.copy_dimensions((0, 0, 0));
-    res.par_iter_mut_with_indices().for_each(|(v, i)| {
+    res.iter_mut_with_indices().for_each(|(v, i)| {
         if labels[i].lake_id == 0 {
             *v = (0, 0, 0)
         } else {
@@ -247,7 +246,7 @@ fn draw_lake_labels(labels: &Grid<Lake>, seed: u64) -> Grid<(u8, u8, u8)> {
 
 fn erode(height_map: &Grid<f64>, flows: &Grid<FlowState>, scale: f64) -> Grid<f64> {
     let mut eroded = height_map.clone();
-    eroded.par_iter_mut_with_indices().for_each(|(v, idx)| {
+    eroded.iter_mut_with_indices().for_each(|(v, idx)| {
         let flow = flows[idx].clone();
         let height_diff = NEIGHBOR_OFFSETS
             .iter()
@@ -274,13 +273,13 @@ fn erode_loop(height_map: &Grid<f64>, iterations: usize) -> Grid<f64> {
     let mut remaining_water = crate::erosion::erode(
         &mut eroded,
         crate::erosion::Params {
-            rain_rate: 0.00012,
-            evaporation_rate: 0.05,
+            rain_rate: 0.0008,
+            evaporation_rate: 0.0005,
 
             min_height_delta: 0.05,
-            gravity: 77.0,
+            gravity: 30.0,
 
-            sediment_capacity_constant: 50.0,
+            sediment_capacity_constant: 1.0,
             dissolving_rate: 0.25,
             deposition_rate: 0.001,
         },
@@ -293,9 +292,7 @@ fn erode_loop(height_map: &Grid<f64>, iterations: usize) -> Grid<f64> {
         .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
         .unwrap_or(&1.0);
 
-    remaining_water.par_iter_mut().for_each(|x| *x /= max_water);
-
-    dbg!(remaining_water[(0, 0)]);
+    remaining_water.iter_mut().for_each(|x| *x /= max_water);
 
     to_gray_image(&remaining_water)
         .save("water.png")
@@ -364,7 +361,7 @@ fn main() {
         (1.0, (255, 255, 255)),
     ];
 
-    let eroded = time!("erode", erode_loop(&height_map, 50));
+    let eroded = time!("erode", erode_loop(&height_map, 500));
 
     let lakes = &compute_lakes(&eroded).0;
     let flows = compute_water_flows(lakes);

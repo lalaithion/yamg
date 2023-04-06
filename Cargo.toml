@@ -15,7 +15,8 @@ rayon = "^1.5"
 itertools = "^0.10.1"
 prisma = "0.1.1"
 angular-units = "0.2.4"
-num = "0.4.0"
+indicatif = "0.17.3"
+fast-math = "0.1"
 
 [profile.release]
 debug = true

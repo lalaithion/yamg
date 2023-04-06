@@ -24,12 +24,8 @@ impl UnitVec {
         match self {
             &UnitVec::Theta(theta) => theta,
             &UnitVec::Xy(x, y) => {
-                let t = f64::atan2(y, x);
-                if t < 0.0 {
-                    t + 2.0 * PI
-                } else {
-                    t
-                }
+                let t = fast_math::atan2(y as f32, x as f32) as f64;
+                if t < 0.0 { t + 2.0 * PI } else { t }.min(2.0 * PI - 1e-10)
             }
         }
     }

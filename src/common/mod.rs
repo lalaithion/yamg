@@ -12,7 +12,7 @@ pub fn bounds(x: f64) -> (usize, usize) {
 }
 
 pub fn interpolate(a: f64, b: f64, x: f64) -> f64 {
-    (b - a) * (3.0 - x * 2.0) * x * x + a
+    a + x * (b - a)
 }
 
 pub fn slope(a: f64, b: f64, x: f64) -> f64 {

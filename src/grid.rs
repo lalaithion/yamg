@@ -343,8 +343,12 @@ impl Grid<f64> {
     pub fn sample(&self, (x, y): (f64, f64)) -> f64 {
         let (minx, maxx) = wrap(bounds(x), self.width(), self.width());
         let (miny, maxy) = wrap(bounds(y), self.height(), self.height());
-        let miny_height = interpolate(self[(minx, miny)], self[(maxx, miny)], x.fract());
-        let maxy_height = interpolate(self[(minx, maxy)], self[(maxx, maxy)], x.fract());
+        let ii = self[(minx, miny)];
+        let ia = self[(minx, maxy)];
+        let ai = self[(maxx, miny)];
+        let aa = self[(maxx, maxy)];
+        let miny_height = interpolate(ii, ai, x.fract());
+        let maxy_height = interpolate(ia, aa, x.fract());
         interpolate(miny_height, maxy_height, y.fract())
     }
 }
